@@ -1,1 +1,361 @@
-eye
+<!doctype html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<title>Weekly Image Pattern</title>
+	<style>
+		html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;background:#fff}
+		.wrap{height:100vh;margin:0 auto;display:flex;flex-direction:column;box-sizing:border-box;position:relative}
+		.controls{display:flex;align-items:center;gap:8px;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:10}
+		.main-content{flex:1;position:relative;display:flex;justify-content:center;align-items:center;overflow:hidden}
+		.canvas-container{position:absolute;user-select:none;left:50%;top:50%;transform:translate(-50%, -50%);transition:transform 0.1s ease}
+		.canvas-container:active{cursor:grabbing}
+		canvas{display:block;height:auto;background:transparent;transform-origin:center}
+		.btn{padding:12px 24px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+			background:#f5f5f7;border:1px solid #e6e6e9;cursor:pointer;font-size:15px;color:#444;
+			transition:all 0.2s ease;backdrop-filter:blur(10px)}
+		.btn:hover{background:#e9e9ec;border-color:#d9d9dc}
+		.btn.icon{padding:12px;width:48px;height:48px}
+		.btn svg{width:24px;height:24px;fill:currentColor}
+		input[type=file]{display:none}
+		.sidebar{display:none;width:240px;background:#fff;border-left:1px solid #eee;height:100vh;
+			position:fixed;right:0;top:0;padding:16px;overflow-y:auto;box-shadow:-2px 0 8px rgba(0,0,0,0.1);z-index:100}
+		.sidebar.open{display:block}
+		.thumbnail-container{position:relative;margin-bottom:16px;background:#fff;border-radius:8px;
+			border:1px solid #eee;padding:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05)}
+		.thumbnail{width:100%;height:160px;object-fit:cover;border-radius:4px;background:#f8f8f8;
+			display:block;opacity:1;transition:all 0.2s}
+		.thumbnail:hover{opacity:0.9}
+		.delete-btn{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;
+			background:#ff4444;border:2px solid #fff;cursor:pointer;display:flex;box-shadow:0 2px 4px rgba(0,0,0,0.2);
+			align-items:center;justify-content:center;color:#fff;font-size:16px;opacity:0;transition:opacity 0.2s}
+		.thumbnail-container:hover .delete-btn{opacity:1}
+		.delete-btn:hover{background:#ff6666;transform:scale(1.1)}
+		.hidden{display:none}
+	</style>
+</head>
+<body>
+	<div class="wrap">
+		<div class="main-content">
+			<div class="canvas-container" id="canvasContainer">
+				<canvas id="canvas"></canvas>
+			</div>
+			<div class="sidebar" id="sidebar">
+				<div id="thumbnails"></div>
+			</div>
+		</div>
+		<div class="controls">
+			<label class="btn" title="Upload image" for="file">
+				Image Upload
+				<input id="file" type="file" accept="image/*" multiple>
+			</label>
+			<button class="btn icon" id="toggleSidebar" title="Show uploaded images">
+				<svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5-7V8h-2v4H8l4 4 4-4h-2z"/></svg>
+			</button>
+		</div>
+	</div>
+
+	<script>
+	const fileEl = document.getElementById('file');
+	const canvas = document.getElementById('canvas');
+	const canvasContainer = document.getElementById('canvasContainer');
+	const ctx = canvas.getContext('2d');
+	const sidebar = document.getElementById('sidebar');
+	const thumbnails = document.getElementById('thumbnails');
+	const toggleSidebarBtn = document.getElementById('toggleSidebar');
+
+	let cells = [];
+	let animating = false;
+	let uploadedImages = [];
+	let scale = 1;
+	const TOTAL_CELLS_PER_IMAGE = 225;
+	const MAX_IMAGES = 30;
+	const GRID_SIZE = 15;
+	const MIN_SCALE = 1;
+	const MAX_SCALE = 5;
+	const STORAGE_KEY = 'savedImages';
+
+	// Load saved images when page loads
+	function loadSavedImages() {
+		try {
+			const savedData = localStorage.getItem(STORAGE_KEY);
+			if (savedData) {
+				const imageDataArray = JSON.parse(savedData);
+				let loadedCount = 0;
+				
+				imageDataArray.forEach(dataUrl => {
+					const img = new Image();
+					img.onload = () => {
+						uploadedImages.push(img);
+						loadedCount++;
+						
+						if (loadedCount === imageDataArray.length) {
+							updateThumbnails();
+							rebuildAll();
+						}
+					};
+					img.src = dataUrl;
+				});
+			}
+		} catch (error) {
+			console.error('Error loading saved images:', error);
+		}
+	}
+
+	// Save current images
+	function saveImages() {
+		try {
+			const imageDataArray = uploadedImages.map(img => {
+				const temp = document.createElement('canvas');
+				const tempCtx = temp.getContext('2d');
+				// 원본 이미지 크기를 유지하면서 최대 1000px로 제한
+				const maxSize = 1000;
+				let width = img.width;
+				let height = img.height;
+				
+				if (width > maxSize || height > maxSize) {
+					if (width > height) {
+						height = Math.floor(height * (maxSize / width));
+						width = maxSize;
+					} else {
+						width = Math.floor(width * (maxSize / height));
+						height = maxSize;
+					}
+				}
+				
+				temp.width = width;
+				temp.height = height;
+				tempCtx.drawImage(img, 0, 0, width, height);
+				return temp.toDataURL('image/jpeg', 0.85);
+			});
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(imageDataArray));
+		} catch (error) {
+			console.error('Error saving images:', error);
+		}
+	}
+
+	function isPerfectSquare(n) {
+		const sqrt = Math.sqrt(n);
+		return sqrt === Math.floor(sqrt);
+	}
+
+	function calculateGridLayout(totalImages) {
+		if (isPerfectSquare(totalImages)) {
+			// For perfect squares (1, 4, 9, 16, etc.), create a square grid
+			const side = Math.sqrt(totalImages);
+			return { cols: side, rows: side };
+		} else {
+			// For other numbers, create a wide rectangle
+			// Try to keep height around 2-3 rows depending on count
+			const preferredHeight = totalImages <= 8 ? 2 : 3;
+			const cols = Math.ceil(totalImages / preferredHeight);
+			const rows = Math.ceil(totalImages / cols);
+			return { cols, rows };
+		}
+	}
+
+	function calculateImagePosition(index, layout, imageW, imageH) {
+		// Calculate grid position without any offset for rectangular layout
+		const gridY = Math.floor(index / layout.cols);
+		const gridX = index % layout.cols;
+		
+		return {
+			x: gridX * imageW,
+			y: gridY * imageH
+		};
+	}
+
+	function updateThumbnails() {
+		thumbnails.innerHTML = '';
+		uploadedImages.forEach((img, index) => {
+			const container = document.createElement('div');
+			container.className = 'thumbnail-container';
+
+			const thumb = document.createElement('img');
+			thumb.src = img.src;
+			thumb.className = 'thumbnail';
+			thumb.title = `Image ${index + 1}`;
+
+			const deleteBtn = document.createElement('button');
+			deleteBtn.className = 'delete-btn';
+			deleteBtn.title = 'Delete image';
+			deleteBtn.innerHTML = '×';
+			deleteBtn.onclick = (e) => {
+				e.stopPropagation();
+				uploadedImages.splice(index, 1);
+				updateThumbnails();
+				rebuildAll();
+				saveImages(); // Save after deleting images
+			};
+
+			container.appendChild(thumb);
+			container.appendChild(deleteBtn);
+			thumbnails.appendChild(container);
+		});
+	}
+
+	fileEl.addEventListener('change', (e) => {
+		const files = e.target.files;
+		if (!files) return;
+		
+		Array.from(files).forEach(file => {
+			if (uploadedImages.length >= MAX_IMAGES) return;
+			
+			const url = URL.createObjectURL(file);
+			const img = new Image();
+			img.onload = () => {
+				uploadedImages.push(img);
+				updateThumbnails();
+				rebuildAll();
+				saveImages(); // Save after adding new images
+				URL.revokeObjectURL(url);
+			};
+			img.src = url;
+		});
+	});
+
+	toggleSidebarBtn.addEventListener('click', () => {
+		sidebar.classList.toggle('open');
+	});
+
+	// Zoom functionality with mousewheel and touchpad
+	canvasContainer.addEventListener('wheel', (e) => {
+		e.preventDefault();
+		const delta = e.deltaY || e.deltaX;
+		const zoomFactor = delta > 0 ? 0.9 : 1.1;
+		const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * zoomFactor));
+		
+		if (newScale !== scale) {
+			scale = newScale;
+			canvasContainer.style.transform = `translate(-50%, -50%) scale(${scale})`;
+		}
+	}, { passive: false });
+
+	function rebuildAll() {
+		if (uploadedImages.length === 0) return;
+		
+		const layout = calculateGridLayout(uploadedImages.length);
+		const viewportW = window.innerWidth * 0.8;
+		const viewportH = window.innerHeight * 0.8;
+		
+		// Calculate grid size based on layout type
+		let gridW, gridH;
+		if (isPerfectSquare(uploadedImages.length)) {
+			// For perfect squares, use square layout
+			const size = Math.min(viewportW, viewportH);
+			gridW = size;
+			gridH = size;
+		} else {
+			// For rectangles, allow wider width while maintaining cell size
+			const preferredCellSize = Math.min(viewportH / layout.rows, viewportW / layout.cols);
+			gridW = preferredCellSize * layout.cols;
+			gridH = preferredCellSize * layout.rows;
+		}
+		
+		const imageW = gridW / layout.cols;
+		const imageH = gridH / layout.rows;
+		
+		canvas.width = gridW;
+		canvas.height = gridH;
+		cells = [];
+		
+		uploadedImages.forEach((img, index) => {
+			const pos = calculateImagePosition(index, layout, imageW, imageH);
+			const w = imageW;
+			const h = imageH;
+			const offsetX = pos.x;
+			const offsetY = pos.y;
+			
+			const cols = GRID_SIZE;
+			const rows = GRID_SIZE;
+			
+			const tmp = document.createElement('canvas');
+			tmp.width = cols;
+			tmp.height = rows;
+			const tctx = tmp.getContext('2d');
+			tctx.drawImage(img, 0, 0, cols, rows);
+			const imgd = tctx.getImageData(0, 0, cols, rows).data;
+
+			const cellW = w / cols;
+			const cellH = h / rows;
+
+			for(let y=0; y<rows; y++) {
+				for(let x=0; x<cols; x++) {
+					const i = (y*cols + x)*4;
+					const r = imgd[i], g = imgd[i+1], b = imgd[i+2], a = imgd[i+3];
+					const color = `rgba(${r},${g},${b},${(a||255)/255})`;
+					
+					const baseAlpha = 0.6 - (Math.abs((r+g+b)/3 - 128)/128)*0.35;
+					const alphaRange = 0.25 + (Math.abs((r-128)/128)+Math.abs((g-128)/128)+Math.abs((b-128)/128))/24;
+					const sizeBase = 0.5 + ((r%37)/37)*0.6;
+					const sizeRange = 0.2 + ((g%41)/41)*0.5;
+					const freq = 2 + ((b%29)/29)*3.5; // Increased base frequency and range
+					const phase = ((x*73856093) ^ (y*19349663)) % (Math.PI*2);
+					
+					const cx = offsetX + x*cellW + cellW/2;
+					const cy = offsetY + y*cellH + cellH/2;
+					
+					cells.push({cx, cy, w: cellW, h: cellH, color, 
+						baseAlpha, alphaRange, sizeBase, sizeRange, freq, phase});
+				}
+			}
+		});
+
+		if(!animating) {
+			animating = true;
+			requestAnimationFrame(loop);
+		}
+	}
+
+	function drawFrame(now) {
+		if (cells.length === 0) return;
+		
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		const t = now / 1000;
+
+		for (const c of cells) {
+			const s1 = Math.sin(t * c.freq + c.phase) * 0.5 + 0.5;
+			const s2 = Math.sin(t * (c.freq*1.4) + c.phase*1.2) * 0.5 + 0.5;
+			let o = 0.5 * s1 + 0.5 * s2;
+			o = Math.max(0, Math.min(1, o));
+
+			const maxRadius = Math.min(c.w, c.h) * 0.48;
+			const sizeFactor = Math.max(0.05, Math.min(1, c.sizeBase + (o - 0.5) * c.sizeRange * 0.8));
+			const alpha = Math.max(0, Math.min(1, c.baseAlpha + (o - 0.5) * c.alphaRange));
+
+			const radius = maxRadius * sizeFactor;
+			ctx.globalAlpha = alpha;
+			ctx.fillStyle = c.color;
+			ctx.beginPath();
+			ctx.arc(c.cx, c.cy, Math.max(0.5, radius), 0, Math.PI*2);
+			ctx.fill();
+		}
+		ctx.globalAlpha = 1;
+	}
+
+	function loop(now) {
+		drawFrame(now);
+		requestAnimationFrame(loop);
+	}
+
+	window.addEventListener('resize', () => {
+		if (uploadedImages.length > 0) {
+			rebuildAll();
+		}
+	});
+
+	// Initialize on page load
+	document.addEventListener('DOMContentLoaded', () => {
+		loadSavedImages();
+	});
+
+	// Save before unload
+	window.addEventListener('beforeunload', () => {
+		if (uploadedImages.length > 0) {
+			saveImages();
+		}
+	});
+	</script>
+</body>
+</html>
